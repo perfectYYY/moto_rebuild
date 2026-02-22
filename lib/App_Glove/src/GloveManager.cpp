@@ -61,11 +61,11 @@ void GloveManager::onPacketReceived(const Protocol::FrameHeader& header, const u
     // 识别左右手并更新快照
     if (status->side_id == 'L') {
         memcpy(&left_status_, status, sizeof(Protocol::GloveStatusPayload));
-        // LOG_D("GLOVE", "Left Temp: %.2f", left_status_.current_temps[0] / 100.0f);
+        LOG_I("GLOVE", "✅ 收到左手套数据! Temp: %.2f°C", left_status_.current_temps[0] / 100.0f);
     } 
     else if (status->side_id == 'R') {
         memcpy(&right_status_, status, sizeof(Protocol::GloveStatusPayload));
-        // LOG_D("GLOVE", "Right Temp: %.2f", right_status_.current_temps[0] / 100.0f);
+        LOG_I("GLOVE", "✅ 收到右手套数据! Temp: %.2f°C", right_status_.current_temps[0] / 100.0f);
     } else {
         LOG_W("GLOVE", "Unknown Side ID: %c", status->side_id);
     }

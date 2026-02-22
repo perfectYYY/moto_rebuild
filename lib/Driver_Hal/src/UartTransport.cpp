@@ -6,26 +6,24 @@ UartTransport::UartTransport(uint8_t uart_num, int rx_pin, int tx_pin)
 }
 
 void UartTransport::init() {
-    LOG_I("UART", "Init Serial%d on Rx:%d Tx:%d", 1, rx_pin_, tx_pin_); // 假设是Serial1
-    
-    // 1. 初始化硬件串口
-    // 注意：ESP32 S3 的 Serial1 默认引脚可能需要映射
+    LOG_I("UART", "Init Serial%d on Rx:%d Tx:%d", 1, rx_pin_, tx_pin_);
+
+    // 启用 UART1 监听 GPIO18
     serial_.begin(115200, SERIAL_8N1, rx_pin_, tx_pin_);
-    
-    // 设置接收缓冲区大小，防止高速突发丢包
     serial_.setRxBufferSize(256);
 
-    // 2. 启动接收任务 (运行在 Core 1，与主业务同核，减少上下文切换)
-    // 堆栈 4096 字节，优先级 5 (高)
+    // 启用接收任务
     xTaskCreatePinnedToCore(
-        rxTaskTrampoline, 
-        "UartRxTask", 
-        4096, 
-        this, 
-        5, 
-        &rx_task_handle_, 
-        1 
+        rxTaskTrampoline,
+        "UartRxTask",
+        4096,
+        this,
+        5,
+        &rx_task_handle_,
+        1
     );
+
+    LOG_I("UART", "UART1 已启用，监听 GPIO%d (RX)", rx_pin_);
 }
 
 // 静态跳转函数
@@ -58,37 +56,63 @@ void UartTransport::setReceiveCallback(ReceiveCallback cb) {
 // 核心：协议解析状态机 (State Machine)
 // 这种写法比递归或复杂 if-else 更快、更安全
 void UartTransport::poll() {
+    // 环形缓冲区保存最近的字节用于调试
+    static uint8_t debug_buffer[64];
+    static uint8_t debug_idx = 0;
+
     while (serial_.available()) {
         uint8_t byte = serial_.read();
 
+        // 打印每个收到的原始字节
+        LOG_I("UART", "RX GPIO%d: 0x%02X (%d)", rx_pin_, byte, byte);
+
+        // 保存到调试缓冲区
+        debug_buffer[debug_idx] = byte;
+        debug_idx = (debug_idx + 1) % 64;
+
         switch (state_) {
             case ParseState::WaitHead1:
-                if (byte == (uint8_t)(Protocol::HEAD_MAGIC & 0xFF)) { // 0x55 (Little Endian low byte)
+                // 0x55 是帧头第一个字节
+                if (byte == 0x55) {
                     state_ = ParseState::WaitHead2;
+                    LOG_I("UART", "→ WaitHead2");
                 }
                 break;
 
             case ParseState::WaitHead2:
-                if (byte == (uint8_t)((Protocol::HEAD_MAGIC >> 8) & 0xFF)) { // 0xAA
+                // 0xAA 是帧头第二个字节
+                if (byte == 0xAA) {
                     state_ = ParseState::WaitType;
+                    LOG_I("UART", "→ WaitType");
+                } else if (byte == 0x55) {
+                    // 仍然是 0x55，继续等待 0xAA
+                    state_ = ParseState::WaitHead2;
                 } else {
-                    // 如果不是 AA，回退检查是否是 55 (重入 WaitHead2 的情况)
-                    state_ = (byte == 0x55) ? ParseState::WaitHead2 : ParseState::WaitHead1;
+                    // 不是 0xAA，回到 WaitHead1
+                    state_ = ParseState::WaitHead1;
                 }
                 break;
 
             case ParseState::WaitType:
                 current_header_.type = byte;
+                LOG_I("UART", "Type=0x%02X → WaitLen", byte);
                 state_ = ParseState::WaitLen;
                 break;
 
             case ParseState::WaitLen:
                 current_header_.len = byte;
+                LOG_I("UART", "Len=%d", byte);
                 expected_len_ = byte;
                 
                 // 安全检查：如果长度太离谱，直接丢弃，防止缓冲区溢出
                 if (expected_len_ > sizeof(buffer_) - 1) {
                     LOG_E("UART", "Payload too large: %d", expected_len_);
+                    // 打印最近收到的字节
+                    LOG_E("UART", "Recent bytes:");
+                    for (int i = 0; i < 16; i++) {
+                        uint8_t idx = (debug_idx + 56 + i) % 64;
+                        LOG_E("UART", "  [%d] 0x%02X", i, debug_buffer[idx]);
+                    }
                     state_ = ParseState::WaitHead1;
                 } else if (expected_len_ == 0) {
                     state_ = ParseState::WaitCheck; // 长度为0直接跳去校验
@@ -125,17 +149,24 @@ void UartTransport::poll() {
 
                 if (calc_sum == byte) {
                     // 校验成功！触发回调
+                    LOG_I("UART", "📥 收到完整帧! Type:%02X Len:%d", current_header_.type, expected_len_);
                     if (callback_) {
                         // 组装一个完整的 Header 传出去
                         Protocol::FrameHeader h = {
-                            Protocol::HEAD_MAGIC, 
-                            current_header_.type, 
+                            Protocol::HEAD_MAGIC,
+                            current_header_.type,
                             current_header_.len
                         };
                         callback_(buffer_, expected_len_);
                     }
                 } else {
                     LOG_E("UART", "CS Error: Exp %02X, Calc %02X", byte, calc_sum);
+                    // 打印最近收到的字节
+                    LOG_E("UART", "Recent bytes:");
+                    for (int i = 0; i < 16; i++) {
+                        uint8_t idx = (debug_idx + 56 + i) % 64;
+                        LOG_E("UART", "  [%d] 0x%02X", i, debug_buffer[idx]);
+                    }
                 }
                 
                 // 无论成功失败，重置状态机
