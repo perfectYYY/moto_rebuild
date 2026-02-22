@@ -29,12 +29,19 @@ void GloveManager::tick(uint32_t current_millis) {
         return; // 不需要动作
     }
 
+    // 测试：一直使用通道1（右手套），不切换
+    if (true) {
+        mux_ctrl_(1); // 切右手
+        sendControlRequest(false);
+        return;
+    }
+
     if (time_slot_ == 0) {
         // [T=0ms] 左手时隙
         mux_ctrl_(0); // 切左手
         // 稍微延时一点点让 Mux 稳定? 通常不需要，ESP32 GPIO 够快
-        sendControlRequest(true); 
-    } 
+        sendControlRequest(true);
+    }
     else if (time_slot_ == 10) {
         // [T=10ms] 右手时隙
         mux_ctrl_(1); // 切右手
@@ -47,10 +54,10 @@ void GloveManager::onPacketReceived(const Protocol::FrameHeader& header, const u
     if (header.type != static_cast<uint8_t>(Protocol::FrameType::StatusReport)) {
         return;
     }
-    
+
     // 长度安全检查
     if (header.len != sizeof(Protocol::GloveStatusPayload)) {
-        LOG_E("GLOVE", "Payload len mismatch! Exp:%d, Got:%d", 
+        LOG_E("GLOVE", "Payload len mismatch! Exp:%d, Got:%d",
               sizeof(Protocol::GloveStatusPayload), header.len);
         return;
     }
@@ -58,16 +65,20 @@ void GloveManager::onPacketReceived(const Protocol::FrameHeader& header, const u
     // 转换 Payload
     const auto* status = reinterpret_cast<const Protocol::GloveStatusPayload*>(payload);
 
-    // 识别左右手并更新快照
-    if (status->side_id == 'L') {
-        memcpy(&left_status_, status, sizeof(Protocol::GloveStatusPayload));
-        LOG_I("GLOVE", "✅ 收到左手套数据! Temp: %.2f°C", left_status_.current_temps[0] / 100.0f);
-    } 
-    else if (status->side_id == 'R') {
-        memcpy(&right_status_, status, sizeof(Protocol::GloveStatusPayload));
-        LOG_I("GLOVE", "✅ 收到右手套数据! Temp: %.2f°C", right_status_.current_temps[0] / 100.0f);
-    } else {
-        LOG_W("GLOVE", "Unknown Side ID: %c", status->side_id);
+    // 识别左右手并更新快照（每秒打印一次）
+    static uint32_t last_log = 0;
+    if (millis() - last_log > 1000) {
+        if (status->side_id == 'L') {
+            memcpy(&left_status_, status, sizeof(Protocol::GloveStatusPayload));
+            LOG_I("GLOVE", "✅ 左手套 Temp: %.2f°C", left_status_.current_temps[0] / 100.0f);
+        }
+        else if (status->side_id == 'R') {
+            memcpy(&right_status_, status, sizeof(Protocol::GloveStatusPayload));
+            LOG_I("GLOVE", "✅ 右手套 Temp: %.2f°C", right_status_.current_temps[0] / 100.0f);
+        } else {
+            LOG_W("GLOVE", "Unknown Side ID: %c", status->side_id);
+        }
+        last_log = millis();
     }
 }
 
