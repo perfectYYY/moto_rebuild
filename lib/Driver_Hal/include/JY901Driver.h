@@ -3,6 +3,7 @@
 #include <array>
 #include "IImuDriver.h"
 #include "Log.h"
+#include "I2CMuxDriver.h"
 
 /**
  * @brief JY901 九轴传感器驱动
@@ -95,11 +96,18 @@ public:
      */
     void setTCA9548AChannel(uint8_t channel) { tcaChannel_ = channel; }
 
+    /**
+     * @brief 绑定 I2C 多路复用器驱动
+     * @param mux I2CMuxDriver 指针
+     */
+    void attachMux(I2CMuxDriver* mux) { mux_ = mux; }
+
 private:
     Config config_;
     bool online_{false};
     uint8_t tcaChannel_ = 0xFF;  // TCA9548A 通道, 0xFF 表示不使用
-    
+    I2CMuxDriver* mux_ = nullptr;  // I2C 多路复用器
+
     // 切换到 TCA9548A 通道
     void selectTCAChannel();
     

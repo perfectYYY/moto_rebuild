@@ -84,7 +84,6 @@ void GloveManager::onPacketReceived(const Protocol::FrameHeader& header, const u
 
 void GloveManager::sendControlRequest(bool is_left) {
     // 构造控制包 (Type 0x02)
-    // 目前先发空控制指令 (仅查询)
     Protocol::FrameHeader header;
     header.head = Protocol::HEAD_MAGIC;
     header.type = static_cast<uint8_t>(Protocol::FrameType::ControlCommand);
@@ -92,7 +91,20 @@ void GloveManager::sendControlRequest(bool is_left) {
 
     Protocol::GloveControlPayload ctrl;
     memset(&ctrl, 0, sizeof(ctrl));
-    // ctrl.update_mask = 0; // 不更新PID，只查状态
+
+    // 设置控制参数
+    // update_mask: Bit7=强制温度, Bit0-6=PID更新
+    ctrl.update_mask = 0x80;  // 强制设置温度
+
+    // 从最近收到的手套数据中获取设定温度
+    const Protocol::GloveStatusPayload* status = is_left ? &left_status_ : &right_status_;
+    ctrl.forced_temp = status->target_temp;
+
+    // 设置 PID 参数 (默认值为当前值，或者使用预设值)
+    for (int i = 0; i < 7; i++) {
+        ctrl.pid_kp[i] = 50;        // 默认 Kp = 50
+        ctrl.power_limit[i] = 800;   // 默认功率限制 800 (80%)
+    }
 
     // 序列化发送缓冲区
     // 结构: Head(4) + Payload(16) + Checksum(1) = 21 Bytes
@@ -108,10 +120,14 @@ void GloveManager::sendControlRequest(bool is_left) {
     ptr += sizeof(ctrl);
 
     // 3. 计算并追加校验和 (Sum8)
-    // 范围: Head(从0xAA开始) + Payload
-    tx_buf[ptr] = Protocol::calculateChecksum(tx_buf, ptr);
-    ptr++;
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < ptr; i++) {
+        checksum += tx_buf[i];
+    }
+    tx_buf[ptr++] = checksum;
 
-    // 4. 发送
-    transport_->send(tx_buf, ptr);
+    // 发送
+    if (transport_) {
+        transport_->send(tx_buf, ptr);
+    }
 }

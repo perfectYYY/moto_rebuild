@@ -48,11 +48,11 @@
 constexpr int PIN_UART_RX = 18;
 constexpr int PIN_UART_TX = 17;
 constexpr int PIN_MUX_S1 = 16;
-constexpr int PIN_I2C_SDA = 1;  // 修正：与旧代码一致
-constexpr int PIN_I2C_SCL = 2;  // 修正：与旧代码一致
-constexpr int PIN_SD_CLK = 47;  // 修正：与旧代码一致
-constexpr int PIN_SD_CMD = 48;  // 修正：与旧代码一致
-constexpr int PIN_SD_D0 = 21;   // 修正：与旧代码一致
+constexpr int PIN_I2C_SDA = 1; 
+constexpr int PIN_I2C_SCL = 2; 
+constexpr int PIN_SD_CLK = 47; 
+constexpr int PIN_SD_CMD = 48; 
+constexpr int PIN_SD_D0 = 21;   
 constexpr int PIN_GNSS_RX = 4;
 constexpr int PIN_GNSS_TX = 5;
 constexpr int PIN_RS485_RX = 6;
@@ -64,15 +64,15 @@ constexpr int PIN_RS485_TX = 7;
 
 // 1. 传输层
 UartTransport uartGlove(1, PIN_UART_RX, PIN_UART_TX);
-HardwareSerial SerialGNSS(2);
-HardwareSerial SerialRS485(2);  // 根据实际硬件调整
+// HardwareSerial SerialGNSS(1);   // TODO: 暂时禁用，等 UART 复用解决
+HardwareSerial SerialRS485(2);  // UART2 - GPIO6/7
 
 // 2. 硬件驱动
 JY901Driver jy901Driver;
 I2CMuxDriver i2cMux(0x70);
 RS485Driver rs485Driver;
 SDStorageDriver sdDriver;
-BE881Driver gnssDriver;
+// BE881Driver gnssDriver;  // TODO: 暂时禁用
 AS7341Driver as7341Driver(0x39);
 BLEDriver bleDriver;
 
@@ -97,12 +97,9 @@ void printSystemStatus();
 [[noreturn]] void taskRealTime(void* pvParameters);
 [[noreturn]] void taskSensors(void* pvParameters);
 [[noreturn]] void taskStorage(void* pvParameters);
-[[noreturn]] void taskGNSS(void* pvParameters);
+// [[noreturn]] void taskGNSS(void* pvParameters);  // TODO: 暂时禁用
 [[noreturn]] void taskSystem(void* pvParameters);
 
-// ==============================================================================
-// 入口函数
-// ==============================================================================
 
 void setup() {
     // 1. 基础日志
@@ -125,7 +122,7 @@ void setup() {
     sensorDataQueue = xQueueCreate(20, sizeof(IStorageService::DataRecord));
     i2cMutex = xSemaphoreCreateMutex();
 
-    // 5. 创建 FreeRTOS 任务 (Arduino 已自动启动调度器)
+
     createTasks();
 
     LOG_I("SYS", "Setup complete, tasks created.");
@@ -158,7 +155,6 @@ void printSystemStatus() {
     esp_chip_info(&chip_info);
     Serial.printf("[STATUS] Chip Cores: %d\n", chip_info.cores);
     
-    // === I2C 设备扫描 (诊断用) ===
     Serial.println("\n--- I2C Scan ---");
     int foundCount = 0;
     for (uint8_t addr = 1; addr < 127; addr++) {
@@ -183,7 +179,7 @@ void printSystemStatus() {
     Serial.println("\n--- Sensor Status ---");
     Serial.printf("  JY901 IMU: %s\n", jy901Driver.isOnline() ? "ONLINE" : "OFFLINE");
     Serial.printf("  SD Card: %s\n", sdDriver.isOnline() ? "ONLINE" : "OFFLINE");
-    Serial.printf("  GNSS: %s\n", gnssDriver.hasFix() ? "HAS FIX" : "NO FIX");
+    // Serial.printf("  GNSS: %s\n", gnssDriver.hasFix() ? "HAS FIX" : "NO FIX");  // TODO: 暂时禁用
     Serial.printf("  BLE: %s\n", bleDriver.isConnected() ? "CONNECTED" : "ADVERTISING");
     Serial.println("========================================\n");
     Serial.flush();
@@ -312,7 +308,8 @@ void initHardware() {
         
         // 设置 TCA9548A 通道
         jy901Driver.setTCA9548AChannel(jy901Channel);
-        
+        jy901Driver.attachMux(&i2cMux);  // 绑定 I2CMuxDriver，避免跨核冲突
+
         if (jy901Driver.init()) {
             jy901Driver.setSampleFrequency(100.0f);
             LOG_I("SYS", "JY901 ready on channel %d", jy901Channel);
@@ -351,13 +348,12 @@ void initHardware() {
         LOG_W("SYS", "SD card not available");
     }
 
-    // 7. GNSS
-    SerialGNSS.begin(115200, SERIAL_8N1, PIN_GNSS_RX, PIN_GNSS_TX);
-    gnssDriver.attachSerial(SerialGNSS);
-    // 串口已在 attachSerial 中初始化
-    if (gnssDriver.init()) {
-        LOG_I("SYS", "GNSS ready");
-    }
+    // 7. GNSS (暂时禁用)
+//     SerialGNSS.begin(115200, SERIAL_8N1, PIN_GNSS_RX, PIN_GNSS_TX);
+//     gnssDriver.attachSerial(SerialGNSS);
+//     if (gnssDriver.init()) {
+//         LOG_I("SYS", "GNSS ready");
+//     }
 
     // 8. BLE
     if (bleDriver.init()) {
@@ -455,16 +451,16 @@ void createTasks() {
         0  // Core 0
     );
 
-    // 任务 4: GNSS 任务 - Core 0, Priority 2
-    xTaskCreatePinnedToCore(
-        taskGNSS,
-        "T_GNSS",
-        3072,
-        nullptr,
-        2,
-        nullptr,
-        0  // Core 0
-    );
+    // 任务 4: GNSS 任务 - Core 0, Priority 2 (暂时禁用)
+    // xTaskCreatePinnedToCore(
+    //     taskGNSS,
+    //     "T_GNSS",
+    //     3072,
+    //     nullptr,
+    //     2,
+    //     nullptr,
+    //     0  // Core 0
+    // );
 
     // 任务 5: 系统任务 (BLE + 屏幕) - Core 0, Priority 1
     xTaskCreatePinnedToCore(
@@ -589,26 +585,27 @@ void createTasks() {
     }
 }
 
-[[noreturn]] void taskGNSS(void* pvParameters) {
-    LOG_I("TASK", "T_GNSS started on Core %d", xPortGetCoreID());
+// // TODO: 暂时禁用 GNSS 任务
+// [[noreturn]] void taskGNSS(void* pvParameters) {
+//     LOG_I("TASK", "T_GNSS started on Core %d", xPortGetCoreID());
 
-    while (true) {
-        // 读取 GNSS 串口数据
-        while (SerialGNSS.available()) {
-            uint8_t data = SerialGNSS.read();
-            gnssDriver.feedData(&data, 1);
-        }
+//     while (true) {
+//         // 读取 GNSS 串口数据
+//         while (SerialGNSS.available()) {
+//             uint8_t data = SerialGNSS.read();
+//             gnssDriver.feedData(&data, 1);
+//         }
 
-        // 获取位置信息
-        if (gnssDriver.hasFix()) {
-            auto pos = gnssDriver.getPosition();
-            LOG_D("GNSS", "Lat=%.6f, Lon=%.6f, Spd=%.1fkm/h",
-                  pos.latitude, pos.longitude, pos.speed * 3.6f);
-        }
+//         // 获取位置信息
+//         if (gnssDriver.hasFix()) {
+//             auto pos = gnssDriver.getPosition();
+//             LOG_D("GNSS", "Lat=%.6f, Lon=%.6f, Spd=%.1fkm/h",
+//                   pos.latitude, pos.longitude, pos.speed * 3.6f);
+//         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
+//         vTaskDelay(pdMS_TO_TICKS(10));
+//     }
+// }
 
 [[noreturn]] void taskSystem(void* pvParameters) {
     LOG_I("TASK", "T_System started on Core %d", xPortGetCoreID());

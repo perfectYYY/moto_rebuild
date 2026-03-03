@@ -6,6 +6,15 @@ JY901Driver::JY901Driver() : config_(Config{}), tcaChannel_(0xFF) {}
 JY901Driver::JY901Driver(const Config& config) : config_(config), tcaChannel_(0xFF) {}
 
 void JY901Driver::selectTCAChannel() {
+    // 如果绑定了 I2CMuxDriver，使用它
+    if (mux_ != nullptr && tcaChannel_ != 0xFF) {
+        // 将 uint8_t 转换为 I2CMuxDriver::Channel
+        I2CMuxDriver::Channel ch = static_cast<I2CMuxDriver::Channel>(tcaChannel_);
+        mux_->selectChannel(ch);
+        return;
+    }
+
+    // 否则使用 Wire 直接操作 (兼容旧代码)
     if (tcaChannel_ != 0xFF) {
         Wire.beginTransmission(0x70);
         Wire.write(1 << tcaChannel_);

@@ -211,9 +211,6 @@ bool BE881Driver::parseVTG(const char* sentence) {
     return true;
 }
 
-// ==============================================================================
-// 工具函数
-// ==============================================================================
 
 double BE881Driver::parseLatitude(const char* str, char hem) {
     double val = parseDecimal(str);
